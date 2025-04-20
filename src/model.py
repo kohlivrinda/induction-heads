@@ -49,6 +49,8 @@ class VectorizedAttentionHead(nn.Module):
     """
     emb_dim: int
     num_heads: int # d_k
+    mask_input: bool
+    max_seq_len: bool
 
     def __post_init__(self):
         super().__init__()
@@ -58,6 +60,9 @@ class VectorizedAttentionHead(nn.Module):
         self.q_proj = nn.Linear(self.emb_dim, self.emb_dim, bias=False)
         self.v_proj = nn.Linear(self.emb_dim, self.emb_dim, bias=False)
         self.scale = torch.sqrt(torch.tensor(self.head_dim, dtype=torch.float32))
+        causal_mask = torch.tril(torch.ones(self.max_seq_len, self.max_seq_len))
+        self.register_buffer("causal_mask", causal_mask)
+
 
     def forward(self, x):
         batch_size , seq_len, _ = x.shape
@@ -75,8 +80,13 @@ class VectorizedAttentionHead(nn.Module):
 
 
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) / self.scale # [B, num_heads, seq, seq]
+        if self.mask_input:
+            mask = self.causal_mask[:seq_len, :seq_len]
+            attn_scores = attn_scores.masked_fill(mask==0, float("-inf"))
+
+
         attn_weights = F.softmax(attn_scores, -1) # [B, num_heads, seq, seq]
-        attn = torch.matmul(attn_weights, v) # [B, num_heads, seq, seq] @ [B, num_heads, seq, head]
+        attn = torch.matmul(attn_weights, v) # [B, num_heads, seq, seq] @ [B, num_heads, seq, head] -> [B, num_heads, seq, head]
         return attn
 
 
@@ -95,12 +105,16 @@ class MultiHeadAttention(nn.Module):
     """
     num_heads: int
     emb_dim: int
+    mask_input: bool
+    max_seq_len: int
 
     def __post_init__(self):
         super().__init__()
 
         self.attention_head = VectorizedAttentionHead(emb_dim = self.emb_dim, 
-                                                      num_heads= self.num_heads)
+                                                      num_heads= self.num_heads,
+                                                      max_seq_len= self.max_seq_len,
+                                                      mask_input= self.mask_input)
         self.linear_layer = nn.Linear(self.emb_dim, self.emb_dim, bias=True)
 
     def forward(self, x):
@@ -111,7 +125,6 @@ class MultiHeadAttention(nn.Module):
         attn = attn.view(batch_size, seq_len, emb_dim)
         attn = self.linear_layer(attn)
         return attn
-
 
 @dataclass
 class FFN(nn.Module):
@@ -136,11 +149,16 @@ class Block(nn.Module):
     num_heads: int
     emb_dim : int
     hidden_dim: int
+    mask_input:bool
+    max_seq_len:int
 
     def __post_init__(self):
         super().__init__()
         self.mha = MultiHeadAttention(num_heads= self.num_heads,
-                                      emb_dim= self.emb_dim)
+                                      emb_dim= self.emb_dim,
+                                      mask_input=self.mask_input,
+                                      max_seq_len=self.max_seq_len
+                                      )
         
         self.ffn = FFN(input_dim= self.emb_dim, 
                        hidden_dim= self.hidden_dim,
@@ -168,6 +186,7 @@ class Transformer(nn.Module):
     emb_dim: int
     vocab_size: int
     max_seq_len: int
+    mask_input: bool
 
     def __post_init__(self):
         super().__init__()
@@ -176,7 +195,9 @@ class Transformer(nn.Module):
         self.blocks = nn.ModuleList([
             Block(num_heads= self.num_heads,
                   emb_dim= self.emb_dim,
-                  hidden_dim= self.hidden_dim
+                  hidden_dim= self.hidden_dim,
+                  max_seq_len= self.max_seq_len,
+                  mask_input= self.mask_input
                   ) for _ in range(self.num_layers)
         ])
         self.lnorm = nn.LayerNorm(self.emb_dim)
