@@ -44,6 +44,7 @@ class VectorizedAttentionHead(nn.Module):
         num_heads: number of attention heads
         mask_input: True to apply causal_mask 
         max_seq_len: maximum sequence length
+        qk_attn: True if return attn pre val multiplication (to study qk circuit)
     Input:
         x : batch_size, seq_len, emb_dim
     Output:
@@ -53,6 +54,7 @@ class VectorizedAttentionHead(nn.Module):
     num_heads: int # d_k
     mask_input: bool
     max_seq_len: bool
+    qk_attn: bool = False
 
     def __post_init__(self):
         super().__init__()
@@ -89,6 +91,8 @@ class VectorizedAttentionHead(nn.Module):
 
         attn_weights = F.softmax(attn_scores, -1) # [B, num_heads, seq, seq]
         attn = torch.matmul(attn_weights, v) # [B, num_heads, seq, seq] @ [B, num_heads, seq, head] -> [B, num_heads, seq, head]
+        if self.qk_attn:
+            return attn_weights, attn
         return attn
 
 
@@ -111,6 +115,7 @@ class MultiHeadAttention(nn.Module):
     emb_dim: int
     mask_input: bool
     max_seq_len: int
+    qk_attn:bool=False
 
     def __post_init__(self):
         super().__init__()
@@ -118,17 +123,23 @@ class MultiHeadAttention(nn.Module):
         self.attention_head = VectorizedAttentionHead(emb_dim = self.emb_dim, 
                                                       num_heads= self.num_heads,
                                                       max_seq_len= self.max_seq_len,
-                                                      mask_input= self.mask_input)
+                                                      mask_input= self.mask_input,
+                                                      qk_attn=self.qk_attn)
         self.linear_layer = nn.Linear(self.emb_dim, self.emb_dim, bias=True)
 
     def forward(self, x):
         batch_size, seq_len, emb_dim = x.shape
 
-        attn = self.attention_head(x)
+        if self.qk_attn:
+            qk_attn, attm = self.attention_head(x)
+        else:
+            attn = self.attention_head(x)
         attn = attn.permute(0, 2, 1, 3)
         attn = attn.view(batch_size, seq_len, emb_dim)
         attn = self.linear_layer(attn)
-        return attn
+
+        return (qk_attn, attn) if self.qk_attn else attn
+
 
 @dataclass
 class FFN(nn.Module):
@@ -170,12 +181,15 @@ class Block(nn.Module):
     hidden_dim: int
     mask_input:bool
     max_seq_len:int
+    qk_attn:bool
+
     def __post_init__(self):
         super().__init__()
         self.mha = MultiHeadAttention(num_heads= self.num_heads,
                                       emb_dim= self.emb_dim,
                                       mask_input=self.mask_input,
-                                      max_seq_len=self.max_seq_len
+                                      max_seq_len=self.max_seq_len,
+                                      qk_attn=self.qk_attn
                                       )
         
         self.ffn = FFN(input_dim= self.emb_dim, 
@@ -186,14 +200,18 @@ class Block(nn.Module):
     def forward(self, x):
         res_stream = x
         x = self.lnorm(x) # Pre-norm transformer
-        attn = self.mha(x)
+
+        if self.qk_attn:
+            qk_attn, attn = self.mha(x)
+        else:
+            attn = self.mha(x)
         res_stream = res_stream + attn
 
         y = self.lnorm(res_stream)
         ffn_out = self.ffn(y)
         res_stream = res_stream + ffn_out
 
-        return res_stream 
+        return (res_stream, qk_attn) if self.qk_attn else res_stream
 
 
 @dataclass
@@ -214,6 +232,7 @@ class Transformer(nn.Module):
     vocab_size: int
     max_seq_len: int
     mask_input: bool
+    qk_attn: bool
 
     def __post_init__(self):
         super().__init__()
@@ -224,11 +243,16 @@ class Transformer(nn.Module):
                   emb_dim= self.emb_dim,
                   hidden_dim= self.hidden_dim,
                   max_seq_len= self.max_seq_len,
-                  mask_input= self.mask_input
+                  mask_input= self.mask_input,
+                  qk_attn= self.qk_attn
                   ) for _ in range(self.num_layers)
         ])
         self.lnorm = nn.LayerNorm(self.emb_dim)
         self.output_layer = nn.Linear(self.emb_dim, self.vocab_size)
+    
+    def __init_weights(self, module):
+        pass
+
     
     def forward(self, x):
         _, seq_len = x.shape
@@ -237,13 +261,26 @@ class Transformer(nn.Module):
         pos_emb = self.positional_embeddings(pos)
 
         x = token_emb + pos_emb
-
+        attentions = []
         for block in self.blocks:
-            x = block(x)
+            if self.qk_attn:
+                x, attn = block(x)
+                attentions.append(attn)
+            else:
+                x = block(x)
         
         x = self.lnorm(x) # pre-norm transformer architecture
         logits = self.output_layer(x)
-        return logits
+        return (logits, attentions) if self.qk_attn else logits
+    
+    def get_attention_patterns(self, x):
+        og_qk_attn = self.qk_attn
+        with torch.no_grad():
+            self.qk_attn = True
+            _, attentions = self.forward()
+        self.qk_attn = og_qk_attn
+        return attentions
+
 
 
         
