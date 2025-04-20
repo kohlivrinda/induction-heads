@@ -42,6 +42,8 @@ class VectorizedAttentionHead(nn.Module):
     Args:
         emb_dim: embedding dimension
         num_heads: number of attention heads
+        mask_input: True to apply causal_mask 
+        max_seq_len: maximum sequence length
     Input:
         x : batch_size, seq_len, emb_dim
     Output:
@@ -97,6 +99,8 @@ class MultiHeadAttention(nn.Module):
     Args:
         num_heads: number of attention heads
         emb_dim: embedding dimensions
+        mask_input: True to apply causal_mask 
+        max_seq_len: maximum sequence length
     Input:
         x: [batch_size, seq_len, emb_dim]
     Output:
@@ -128,6 +132,13 @@ class MultiHeadAttention(nn.Module):
 
 @dataclass
 class FFN(nn.Module):
+    """
+    2 layer feedforward network with gelu activation ez.
+    Input:
+        x: batch_size, seq_len, emb_dim
+    Output:
+        x: batch_size, seq_len, emb_dim
+    """
     input_dim: int 
     hidden_dim: int
     output_dim: int
@@ -146,12 +157,19 @@ class FFN(nn.Module):
 
 @dataclass
 class Block(nn.Module):
+    """
+    Transformer block (pre-norm) with layernorm, MHA and FFN
+
+    Input:
+        x: batch_size, seq_len, emb_dim
+    Output:
+        res_stream: batch_size, seq_len, emb_dim
+    """
     num_heads: int
     emb_dim : int
     hidden_dim: int
     mask_input:bool
     max_seq_len:int
-
     def __post_init__(self):
         super().__init__()
         self.mha = MultiHeadAttention(num_heads= self.num_heads,
@@ -180,6 +198,15 @@ class Block(nn.Module):
 
 @dataclass
 class Transformer(nn.Module):
+    """
+    Entire transformer model (pre-norm style)
+    x -> token embeddings + pos embeddings -> attn blocks -> unembedding layer (logits)
+
+    Input:
+        x: batch_size, seq_len
+    Output:
+        logits: batch_size, vocab_size
+    """
     num_layers: int # blocks
     num_heads: int
     hidden_dim: int
