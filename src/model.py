@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import torch.nn as nn
 import torch
-import torch.functional as F
+import torch.nn.functional as F
 
 @dataclass
 class AttentionHead(nn.Module):
@@ -53,8 +53,9 @@ class VectorizedAttentionHead(nn.Module):
     emb_dim: int
     num_heads: int # d_k
     mask_input: bool
-    max_seq_len: bool
+    max_seq_len: int
     qk_attn: bool = False
+    dropout_ratio: float
 
     def __post_init__(self):
         super().__init__()
@@ -64,6 +65,7 @@ class VectorizedAttentionHead(nn.Module):
         self.q_proj = nn.Linear(self.emb_dim, self.emb_dim, bias=False)
         self.v_proj = nn.Linear(self.emb_dim, self.emb_dim, bias=False)
         self.scale = torch.sqrt(torch.tensor(self.head_dim, dtype=torch.float32))
+        self.dropout = nn.Dropout(self.dropout_ratio)
         causal_mask = torch.tril(torch.ones(self.max_seq_len, self.max_seq_len))
         self.register_buffer("causal_mask", causal_mask)
 
@@ -90,6 +92,7 @@ class VectorizedAttentionHead(nn.Module):
 
 
         attn_weights = F.softmax(attn_scores, -1) # [B, num_heads, seq, seq]
+        attn_weights = self.dropout(attn_weights)
         attn = torch.matmul(attn_weights, v) # [B, num_heads, seq, seq] @ [B, num_heads, seq, head] -> [B, num_heads, seq, head]
         if self.qk_attn:
             return attn_weights, attn
@@ -116,6 +119,7 @@ class MultiHeadAttention(nn.Module):
     mask_input: bool
     max_seq_len: int
     qk_attn:bool=False
+    dropout_ratio:float
 
     def __post_init__(self):
         super().__init__()
@@ -124,14 +128,15 @@ class MultiHeadAttention(nn.Module):
                                                       num_heads= self.num_heads,
                                                       max_seq_len= self.max_seq_len,
                                                       mask_input= self.mask_input,
-                                                      qk_attn=self.qk_attn)
+                                                      qk_attn=self.qk_attn,
+                                                      dropout_ratio=self.dropout_ratio)
         self.linear_layer = nn.Linear(self.emb_dim, self.emb_dim, bias=True)
 
     def forward(self, x):
         batch_size, seq_len, emb_dim = x.shape
 
         if self.qk_attn:
-            qk_attn, attm = self.attention_head(x)
+            qk_attn, attn = self.attention_head(x)
         else:
             attn = self.attention_head(x)
         attn = attn.permute(0, 2, 1, 3)
@@ -153,12 +158,14 @@ class FFN(nn.Module):
     input_dim: int 
     hidden_dim: int
     output_dim: int
+    dropout_ratio: float
 
     def __post_init__(self):
         super().__init__()
         self.linear1 = nn.Linear(self.input_dim, self.hidden_dim, bias=True)
         self.linear2 = nn.Linear(self.hidden_dim, self.output_dim, bias=True)
         self.activation = nn.GELU()
+        self.dropout = nn.Dropout(self.dropout_ratio)
 
     def forward(self, x):
         x = self.linear1(x)
@@ -182,6 +189,7 @@ class Block(nn.Module):
     mask_input:bool
     max_seq_len:int
     qk_attn:bool
+    dropout_ratio:float
 
     def __post_init__(self):
         super().__init__()
@@ -189,13 +197,16 @@ class Block(nn.Module):
                                       emb_dim= self.emb_dim,
                                       mask_input=self.mask_input,
                                       max_seq_len=self.max_seq_len,
-                                      qk_attn=self.qk_attn
+                                      qk_attn=self.qk_attn,
+                                      dropout_ratio=self.dropout_ratio
                                       )
         
         self.ffn = FFN(input_dim= self.emb_dim, 
                        hidden_dim= self.hidden_dim,
-                       output_dim= self.emb_dim)
+                       output_dim= self.emb_dim,
+                       dropout_ratio=self.dropout_ratio)
         self.lnorm = nn.LayerNorm(normalized_shape=self.emb_dim)
+        self.dropout = nn.Dropout(self.dropout_ratio)
 
     def forward(self, x):
         res_stream = x
@@ -205,11 +216,11 @@ class Block(nn.Module):
             qk_attn, attn = self.mha(x)
         else:
             attn = self.mha(x)
-        res_stream = res_stream + attn
+        res_stream = res_stream + self.dropout(attn)
 
         y = self.lnorm(res_stream)
         ffn_out = self.ffn(y)
-        res_stream = res_stream + ffn_out
+        res_stream = res_stream + self.dropout(ffn_out)
 
         return (res_stream, qk_attn) if self.qk_attn else res_stream
 
@@ -233,6 +244,7 @@ class Transformer(nn.Module):
     max_seq_len: int
     mask_input: bool
     qk_attn: bool
+    dropout_ratio:float
 
     def __post_init__(self):
         super().__init__()
@@ -244,15 +256,25 @@ class Transformer(nn.Module):
                   hidden_dim= self.hidden_dim,
                   max_seq_len= self.max_seq_len,
                   mask_input= self.mask_input,
-                  qk_attn= self.qk_attn
+                  qk_attn= self.qk_attn,
+                  dropout_ratio= self.dropout_ratio
                   ) for _ in range(self.num_layers)
         ])
         self.lnorm = nn.LayerNorm(self.emb_dim)
         self.output_layer = nn.Linear(self.emb_dim, self.vocab_size)
+        self.apply(self.__init_weights)
+        self.dropout = nn.Dropout(self.dropout_ratio)
     
     def __init_weights(self, module):
-        pass
-
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight) 
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        if isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean = 0, std = self.emb_dim ** -0.5)
+        if isinstance(module, nn.LayerNorm):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
     
     def forward(self, x):
         _, seq_len = x.shape
@@ -261,6 +283,7 @@ class Transformer(nn.Module):
         pos_emb = self.positional_embeddings(pos)
 
         x = token_emb + pos_emb
+        x = self.dropout(x)
         attentions = []
         for block in self.blocks:
             if self.qk_attn:
@@ -277,7 +300,7 @@ class Transformer(nn.Module):
         og_qk_attn = self.qk_attn
         with torch.no_grad():
             self.qk_attn = True
-            _, attentions = self.forward()
+            _, attentions = self.forward(x)
         self.qk_attn = og_qk_attn
         return attentions
 
