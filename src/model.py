@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from typing import Any
 
+
 class AttentionHead(nn.Module):
     """
     dot product attention for one head
@@ -20,7 +21,7 @@ class AttentionHead(nn.Module):
         super().__init__()
         self.emb_dim = emb_dim
         self.head_dim = head_dim
-        
+
         self.k_proj = nn.Linear(self.emb_dim, self.head_dim, bias=False)
         self.q_proj = nn.Linear(self.emb_dim, self.head_dim, bias=False)
         self.v_proj = nn.Linear(self.emb_dim, self.head_dim, bias=False)
@@ -52,7 +53,9 @@ class VectorizedAttentionHead(nn.Module):
         attn: batch_size, num_heads, seq_len, head_dim
     """
 
-    def __init__(self, emb_dim, num_heads, max_seq_len, mask_input, qk_attn, dropout_ratio):
+    def __init__(
+        self, emb_dim, num_heads, max_seq_len, mask_input, qk_attn, dropout_ratio
+    ):
         super().__init__()
         self.emb_dim = emb_dim
         self.num_heads = num_heads
@@ -116,7 +119,9 @@ class MultiHeadAttention(nn.Module):
 
     """
 
-    def __post_init__(self, num_heads, emb_dim, mask_input, max_seq_len, qk_attn, dropout_ratio):
+    def __post_init__(
+        self, num_heads, emb_dim, mask_input, max_seq_len, qk_attn, dropout_ratio
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.mask_input = mask_input
@@ -160,7 +165,7 @@ class FFN(nn.Module):
 
     def __init__(self, input_dim, output_dim, hidden_dim, dropout_ratio):
         super().__init__()
-        
+
         self.linear1 = nn.Linear(input_dim, hidden_dim, bias=True)
         self.linear2 = nn.Linear(hidden_dim, output_dim, bias=True)
         self.activation = nn.GELU()
@@ -171,6 +176,7 @@ class FFN(nn.Module):
         x = self.activation(x)
         x = self.linear2(x)
         return x
+
 
 class Block(nn.Module):
     """
@@ -190,26 +196,35 @@ class Block(nn.Module):
     qk_attn: bool
     dropout_ratio: float
 
-    def __post_init__(self, num_heads, emb_dim, hidden_dim, mask_input, max_seq_len, qk_attn, dropout_ratio):
+    def __post_init__(
+        self,
+        num_heads,
+        emb_dim,
+        hidden_dim,
+        mask_input,
+        max_seq_len,
+        qk_attn,
+        dropout_ratio,
+    ):
         super().__init__()
-        
+
         self.qk_attn = qk_attn
         self.mha = MultiHeadAttention(
-            num_heads = num_heads,
-            emb_dim = emb_dim,
-            mask_input = mask_input,
-            max_seq_len = max_seq_len,
-            qk_attn = qk_attn,
-            dropout_ratio = dropout_ratio,
+            num_heads=num_heads,
+            emb_dim=emb_dim,
+            mask_input=mask_input,
+            max_seq_len=max_seq_len,
+            qk_attn=qk_attn,
+            dropout_ratio=dropout_ratio,
         )
 
         self.ffn = FFN(
-            input_dim = emb_dim,
-            hidden_dim = hidden_dim,
-            output_dim = emb_dim,
-            dropout_ratio = dropout_ratio,
+            input_dim=emb_dim,
+            hidden_dim=hidden_dim,
+            output_dim=emb_dim,
+            dropout_ratio=dropout_ratio,
         )
-        self.lnorm = nn.LayerNorm(normalized_shape = emb_dim)
+        self.lnorm = nn.LayerNorm(normalized_shape=emb_dim)
         self.dropout = nn.Dropout(dropout_ratio)
 
     def forward(self, x):
@@ -242,7 +257,7 @@ class Transformer(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        
+
         for key, value in self.config.items():
             setattr(self, key, value)
 
