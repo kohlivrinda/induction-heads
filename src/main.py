@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import utils.file_utils as futils
-from src.dataset import prepare_dataset
+from src.synth_dataset import create_dataloader, generate_induction_sample
 from src.train import train_epoch
 from src.analysis import visualize_attention
 from src.model import Transformer
@@ -11,7 +11,7 @@ from src.model import Transformer
 
 def run_experiment(config):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dataloader, tokenizer = prepare_dataset(config)
+    dataloader = create_dataloader(config)
     model = Transformer(config).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(config["learning_rate"]))
@@ -33,14 +33,14 @@ def run_experiment(config):
         )
 # model, tokenizer, text_input, config, device, layer=0, head=0
         if epoch % 1 == 0:
-            sample_text = "The president of the United States is the head of the state. The president leads the executive branch."
+            x_sample = generate_induction_sample(seq_len=config["max_seq_len"], vocab_size=config["vocab_size"]).to(device).unsqueeze(0)
 
             for layer in range(config["num_layers"]):
-                visualize_attention(model, tokenizer, sample_text, config, device, layer=layer, head=1)
+                visualize_attention(model, x_sample, config, device, layer=layer, head=1)
 
         torch.cuda.empty_cache()
 
-    return model, tokenizer
+    return model
 
 
 def main():

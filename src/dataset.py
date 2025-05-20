@@ -4,7 +4,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from functools import partial
 from torch.nn.utils.rnn import pad_sequence
-
+import random
 
 class TextDataset(Dataset):
     def __init__(self, tokenized_dataset):
@@ -70,3 +70,4 @@ def prepare_dataset(config):
     )
     print("LOG : dataset processing done successfully.")
     return dataloader, tokenizer
+

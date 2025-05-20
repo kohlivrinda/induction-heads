@@ -3,17 +3,14 @@ import matplotlib.pyplot as plt
 import os
 
 
-def visualize_attention(model, tokenizer, text_input, config, device, layer=0, head=0):
+def visualize_attention(model, x_input, config, device, layer=0, head=0):
     model.eval()
 
-    tokens = tokenizer.encode(text_input)
-    tokens = tokens[: config["max_seq_len"]]
-    token_strs = [tokenizer.decode([t]) for t in tokens]
-
-    x = torch.tensor(tokens).unsqueeze(0).to(device)
+    token_ids = x_input.squeeze(0).tolist()
+    token_strs = [f"t{tok}" for tok in token_ids] 
 
     with torch.no_grad():
-        y_hat, attention_patterns = model(x)
+        _, attention_patterns = model(x_input)
     attn_matx = attention_patterns[layer][0, head].cpu().numpy()
 
     plt.figure(figsize=(12, 10))

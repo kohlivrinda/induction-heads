@@ -16,18 +16,18 @@ def train_epoch(
     scheduler,
     epoch,
 ):
-    scaler = GradScaler()
+    scaler = GradScaler() # for mixed precision training (AMP)
     total_loss = 0
     model.train()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    accum_steps = 8
+    accum_steps = 8 #for gradient accumulation
     for batch, (x, y) in enumerate(dataloader):
         # print('------------------')
         # print(x.shape, y.shape)
         x, y = x.to(device), y.to(device)
     
         optimizer.zero_grad()
-        with autocast(device_type="cuda"):
+        with autocast(device_type="cuda"): #amp
             
             logits, _ = model(x)
             logits = logits.view(-1, config["vocab_size"]) #assuming  cross entropy
