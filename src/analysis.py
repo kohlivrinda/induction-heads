@@ -1,5 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
+import os
 
 
 def visualize_attention(model, tokenizer, text_input, config, device, layer=0, head=0):
@@ -12,7 +13,7 @@ def visualize_attention(model, tokenizer, text_input, config, device, layer=0, h
     x = torch.tensor(tokens).unsqueeze(0).to(device)
 
     with torch.no_grad():
-        y_hat, attention_patterns = model(x, return_attention=True)
+        y_hat, attention_patterns = model(x)
     attn_matx = attention_patterns[layer][0, head].cpu().numpy()
 
     plt.figure(figsize=(12, 10))
@@ -25,7 +26,10 @@ def visualize_attention(model, tokenizer, text_input, config, device, layer=0, h
     plt.title(f"Attention Pattern: Layer {layer}, Head {head}")
     plt.tight_layout()
 
-    filename = f"../plots/attn/attn_layer{layer}_head{head}.png"
+    output_dir = "../plots/attn"
+    os.makedirs(output_dir, exist_ok=True)
+
+    filename = f"{output_dir}/attn_layer{layer}_head{head}.png" #TODO: add epoch level saving
     plt.savefig(filename)
 
     return attn_matx

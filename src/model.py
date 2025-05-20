@@ -119,7 +119,7 @@ class MultiHeadAttention(nn.Module):
 
     """
 
-    def __post_init__(
+    def __init__(
         self, num_heads, emb_dim, mask_input, max_seq_len, qk_attn, dropout_ratio
     ):
         super().__init__()
@@ -148,7 +148,7 @@ class MultiHeadAttention(nn.Module):
         else:
             attn = self.attention_head(x)
         attn = attn.permute(0, 2, 1, 3)
-        attn = attn.view(batch_size, seq_len, emb_dim)
+        attn = attn.reshape(batch_size, seq_len, emb_dim)
         attn = self.linear_layer(attn)
 
         return (qk_attn, attn) if self.qk_attn else attn
@@ -188,15 +188,7 @@ class Block(nn.Module):
         res_stream: batch_size, seq_len, emb_dim
     """
 
-    num_heads: int
-    emb_dim: int
-    hidden_dim: int
-    mask_input: bool
-    max_seq_len: int
-    qk_attn: bool
-    dropout_ratio: float
-
-    def __post_init__(
+    def __init__(
         self,
         num_heads,
         emb_dim,
@@ -258,8 +250,9 @@ class Transformer(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        for key, value in self.config.items():
+        for key, value in config.items():
             setattr(self, key, value)
+            
 
         self.embeddings = nn.Embedding(
             num_embeddings=self.vocab_size, embedding_dim=self.emb_dim
